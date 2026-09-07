@@ -19,13 +19,13 @@ html, body {
   left: 16px;
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   z-index: 10;
   background-color: rgba(30, 30, 30, 0.85);
   padding: 8px 14px;
   border-radius: 6px;
   border: 1px solid #2a2a2a;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 button {
@@ -38,8 +38,28 @@ button {
   font-size: 13px;
 }
 
-button:hover {
+button:hover:not(:disabled) {
   background-color: #383838;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+button.recording {
+  background-color: #7f1d1d;
+  border-color: #991b1b;
+}
+
+#status-indicator {
+  color: #a3a3a3;
+  font-size: 12px;
+}
+
+#pressure-indicator {
+  font-variant-numeric: tabular-nums;
+  color: #737373;
 }
 
 #board {

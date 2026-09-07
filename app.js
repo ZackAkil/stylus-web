@@ -1,13 +1,22 @@
+import { StrokeRenderer } from './stroke-renderer.js';
+import { StrokeRecorder } from './recorder.js';
+
 const canvas = document.getElementById('board');
 const ctx = canvas.getContext('2d');
+const recordBtn = document.getElementById('record-btn');
+const playBtn = document.getElementById('play-btn');
 const clearBtn = document.getElementById('clear-btn');
+const statusIndicator = document.getElementById('status-indicator');
 const pressureIndicator = document.getElementById('pressure-indicator');
 
-let isDrawing = false;
-let lastPoint = null;
+const renderer = new StrokeRenderer(ctx, {
+  minWidth: 1,
+  maxWidth: 12,
+  strokeColor: '#ffffff',
+});
 
-const MIN_WIDTH = 1;
-const MAX_WIDTH = 12;
+const recorder = new StrokeRecorder();
+let isDrawing = false;
 
 function resizeCanvas() {
   const dpr = window.devicePixelRatio || 1;
@@ -17,73 +26,6 @@ function resizeCanvas() {
   canvas.height = rect.height * dpr;
 
   ctx.scale(dpr, dpr);
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
-}
-
-function getLineWidth(pressure) {
-  const effectivePressure = pressure > 0 ? pressure : 0.5;
-  return MIN_WIDTH + (MAX_WIDTH - MIN_WIDTH) * effectivePressure;
-}
-
-function drawSegment(p1, p2, pressure) {
-  ctx.beginPath();
-  ctx.moveTo(p1.x, p1.y);
-  ctx.lineTo(p2.x, p2.y);
-  ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = getLineWidth(pressure);
-  ctx.stroke();
-}
-
-function handlePointer(event) {
-  const rect = canvas.getBoundingClientRect();
-  const currentPoint = {
-    x: event.clientX - rect.left,
-    y: event.clientY - rect.top,
-  };
-
-  const pressure = event.pressure;
-  pressureIndicator.textContent = `Pressure: ${pressure.toFixed(2)}`;
-
-  if (lastPoint) {
-    drawSegment(lastPoint, currentPoint, pressure);
-  }
-
-  lastPoint = currentPoint;
-}
-
-function onPointerDown(event) {
-  if (event.pointerType !== 'pen') return;
-  isDrawing = true;
-  canvas.setPointerCapture(event.pointerId);
-
-  const rect = canvas.getBoundingClientRect();
-  lastPoint = {
-    x: event.clientX - rect.left,
-    y: event.clientY - rect.top,
-  };
-
-  // Process coalesced events if available for high-frequency input
-  const events = event.getCoalescedEvents ? event.getCoalescedEvents() : [event];
-  for (const e of events) {
-    handlePointer(e);
-  }
-}
-
-function onPointerMove(event) {
-  if (!isDrawing || event.pointerType !== 'pen') return;
-
-  const events = event.getCoalescedEvents ? event.getCoalescedEvents() : [event];
-  for (const e of events) {
-    handlePointer(e);
-  }
-}
-
-function onPointerUp(event) {
-  if (!isDrawing || event.pointerType !== 'pen') return;
-  isDrawing = false;
-  lastPoint = null;
-  canvas.releasePointerCapture(event.pointerId);
 }
 
 function clearCanvas() {
@@ -93,11 +35,120 @@ function clearCanvas() {
   ctx.restore();
 }
 
+function processPointerPoint(type, x, y, pressure) {
+  pressureIndicator.textContent = `Pressure: ${pressure.toFixed(2)}`;
+
+  if (type === 'down') {
+    renderer.beginStroke(x, y, pressure);
+    renderer.addPoint(x, y, pressure);
+  } else if (type === 'move') {
+    renderer.addPoint(x, y, pressure);
+  } else if (type === 'up') {
+    renderer.endStroke();
+  }
+
+  recorder.recordEvent(type, x, y, pressure);
+}
+
+function onPointerDown(event) {
+  if (event.pointerType !== 'pen' || recorder.isPlaying) return;
+
+  isDrawing = true;
+  canvas.setPointerCapture(event.pointerId);
+
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+
+  processPointerPoint('down', x, y, event.pressure);
+}
+
+function onPointerMove(event) {
+  if (!isDrawing || event.pointerType !== 'pen' || recorder.isPlaying) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const events = event.getCoalescedEvents ? event.getCoalescedEvents() : [event];
+
+  for (const e of events) {
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    processPointerPoint('move', x, y, e.pressure);
+  }
+}
+
+function onPointerUp(event) {
+  if (!isDrawing || event.pointerType !== 'pen') return;
+
+  isDrawing = false;
+  canvas.releasePointerCapture(event.pointerId);
+
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+
+  processPointerPoint('up', x, y, event.pressure);
+}
+
+function toggleRecording() {
+  if (recorder.isPlaying) return;
+
+  if (recorder.isRecording) {
+    recorder.stopRecording();
+    recordBtn.textContent = 'Record';
+    recordBtn.classList.remove('recording');
+    statusIndicator.textContent = '';
+    playBtn.disabled = !recorder.hasRecording();
+  } else {
+    recorder.startRecording();
+    recordBtn.textContent = 'Stop Recording';
+    recordBtn.classList.add('recording');
+    statusIndicator.textContent = 'Recording...';
+    playBtn.disabled = true;
+  }
+}
+
+function startPlayback() {
+  if (!recorder.hasRecording() || recorder.isPlaying || recorder.isRecording) return;
+
+  clearCanvas();
+  statusIndicator.textContent = 'Playing...';
+  playBtn.disabled = true;
+  recordBtn.disabled = true;
+  clearBtn.disabled = true;
+
+  recorder.play(
+    (ev) => {
+      pressureIndicator.textContent = `Pressure: ${ev.pressure.toFixed(2)}`;
+      if (ev.type === 'down') {
+        renderer.beginStroke(ev.x, ev.y, ev.pressure);
+        renderer.addPoint(ev.x, ev.y, ev.pressure);
+      } else if (ev.type === 'move') {
+        renderer.addPoint(ev.x, ev.y, ev.pressure);
+      } else if (ev.type === 'up') {
+        renderer.endStroke();
+      }
+    },
+    () => {
+      statusIndicator.textContent = '';
+      playBtn.disabled = false;
+      recordBtn.disabled = false;
+      clearBtn.disabled = false;
+    }
+  );
+}
+
 window.addEventListener('resize', resizeCanvas);
 canvas.addEventListener('pointerdown', onPointerDown);
 canvas.addEventListener('pointermove', onPointerMove);
 canvas.addEventListener('pointerup', onPointerUp);
 canvas.addEventListener('pointercancel', onPointerUp);
-clearBtn.addEventListener('click', clearCanvas);
+
+recordBtn.addEventListener('click', toggleRecording);
+playBtn.addEventListener('click', startPlayback);
+clearBtn.addEventListener('click', () => {
+  if (!recorder.isPlaying) {
+    clearCanvas();
+  }
+});
 
 resizeCanvas();
